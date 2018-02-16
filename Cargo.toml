@@ -1,0 +1,7 @@
+[package]
+name = "juniper_api"
+version = "0.1.0"
+authors = ["davidroeca"]
+
+[dependencies]
+juniper = "0.9.0"
