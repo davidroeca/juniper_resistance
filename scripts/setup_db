@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# The main point of this script is to create a simple, restricted user that is
+# easy to drop and recreate
+
+set -e
+
+RESISTANCE_DB='resistance_db'
+RESISTANCE_USER='resistance_user'
+RESISTANCE_PASS='resistance_pass'
+
+echo "This will drop and recreate the following:"
+echo "1. The '${RESISTANCE_DB}' database"
+echo "2. The '${RESISTANCE_USER}' user"
+
+read -p "Proceed (y/n)? " choice
+case "$choice" in
+  y|Y ) echo "Continuing...";;
+  * ) echo "Abort" && exit 0;;
+esac
+
+cd ~postgres/
+sudo -u postgres psql -c \
+  "DROP DATABASE IF EXISTS ${RESISTANCE_DB}"
+sudo -u postgres psql -c \
+  "DROP ROLE IF EXISTS ${RESISTANCE_USER}"
+sudo -u postgres psql -c \
+  "CREATE DATABASE ${RESISTANCE_DB}"
+sudo -u postgres psql -c \
+  "CREATE ROLE ${RESISTANCE_USER} WITH LOGIN PASSWORD '${RESISTANCE_PASS}'"
+sudo -u postgres psql -c \
+  "GRANT ALL PRIVILEGES ON DATABASE ${RESISTANCE_DB} TO GROUP ${RESISTANCE_USER}"

@@ -18,6 +18,9 @@ use juniper::{FieldResult};
 //------------------------------------------------------------
 // Define base graphql object types
 //------------------------------------------------------------
+
+type ID = i32;
+
 #[derive(Clone)]
 #[derive(GraphQLEnum)]
 enum Team {
@@ -55,7 +58,6 @@ struct NewPlayer {
 //------------------------------------------------------------
 // Define prerequisite database for the examples
 //------------------------------------------------------------
-type ID = i32;
 
 struct Database {
     players: HashMap<ID, Player>,
