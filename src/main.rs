@@ -1,23 +1,38 @@
 #![feature(plugin)]
 #![plugin(rocket_codegen)]
 
-use std::collections::HashMap;
-use std::sync::RwLock;
-
+#[macro_use] extern crate diesel;
+extern crate dotenv;
 extern crate rocket;
-use rocket::response::content;
-use rocket::State;
-
-//#[macro_use] extern crate rocket_contrib;
 
 #[macro_use] extern crate juniper;
 extern crate juniper_rocket;
 
+use rocket::response::content;
+use rocket::State;
+
+
 use juniper::{FieldResult};
+
+use diesel::r2d2;
+
+pub mod models;
+pub mod schema;
+pub mod database;
+
+use database::{
+    find_player,
+    create_player,
+};
 
 //------------------------------------------------------------
 // Define base graphql object types
 //------------------------------------------------------------
+
+static RESISTANCE_STR: &'static str = "resistance";
+static SPIES_STR: &'static str = "spies";
+static KNOWS_MERLIN_STR: &'static str = "knows_merlin";
+static CAN_SEE_SPIES_STR: &'static str = "can_see_spies";
 
 type ID = i32;
 
@@ -26,6 +41,7 @@ type ID = i32;
 enum Team {
     Spy,
     Resistance,
+    Unknown,
 }
 
 #[derive(Clone)]
@@ -33,6 +49,7 @@ enum Team {
 enum SpecialAbility {
     CanSeeSpies,
     KnowsMerlin,
+    Unknown,
 }
 
 #[derive(Clone)]
@@ -60,48 +77,33 @@ struct NewPlayer {
 //------------------------------------------------------------
 
 struct Database {
-    players: HashMap<ID, Player>,
-    max_player_id: ID,
+    pool: Option<r2d2::Pool>,
 }
 
 impl Database {
-
     pub fn new() -> Database {
         Database {
-            players: HashMap::<ID, Player>::new(),
-            max_player_id: 0,
+            pool: None,
         }
     }
 
-    pub fn find_player(&self, id: &ID) -> Result<Player, &'static str> {
-        match self.players.get(&id) {
-            None => Err("No Player found"),
-            Some(player) => Ok(player.clone()),
-        }
-    }
-
-    pub fn insert_player(&mut self, new_player: NewPlayer) -> Player {
-        let next_player_id = self.max_player_id + 1;
-        let player = Player {
-            id: next_player_id,
-            name: new_player.name,
-            special_abilities: new_player.special_abilities,
-            team: new_player.team,
+    pub fn get_pool(&mut self) -> r2d2::Pool {
+        match self.pool {
+            None => {self.pool = create_pool();},
+            Some(pool) => (),
         };
-        self.players.insert(next_player_id, player.clone());
-        self.max_player_id = next_player_id;
-        player
+        self.pool.clone()
     }
 }
 
 struct Context {
-    database: RwLock<Database>,
+    database: Database,
 }
 
 impl Context {
     fn new() -> Context {
         Context {
-            database: RwLock::new(Database::new()),
+            database: Database::new(),
         }
     }
 }
@@ -119,10 +121,12 @@ graphql_object!(Query: Context |&self| {
         "1.0"
     }
 
-    field player(&executor, id: ID) -> FieldResult<Player> {
+    field player(&executor, name: &str) -> FieldResult<Player> {
         let context = executor.context();
-        let database = context.database.try_read()?;
-        let player = database.find_player(&id)?;
+        let pool = context.database.get_pool();
+        let connection = pool.get();
+
+        let player = find_player(name)?;
         Ok(player)
     }
 
@@ -134,8 +138,24 @@ graphql_object!(Mutation: Context |&self| {
 
     field createPlayer(&executor, new_player: NewPlayer) -> FieldResult<Player> {
         let context = executor.context();
-        let mut database = context.database.try_write()?;
-        let player: Player = database.insert_player(new_player);
+        let pool = context.database.get_pool();
+        let connection = pool.get();
+        let team_name = match new_player.team {
+            Spy => "spy",
+            Resistance => "resistance",
+        };
+        let abilities: Vec<String> = abilities.into_iter().map(|ability| {
+            match ability {
+                CanSeeSpies => "can_see_spies".to_string(),
+                KnowsMerlin => "knows_merlin".to_string(),
+            }
+        }).collect();
+        let player: Player = create_player(
+           connection,
+           new_player.name,
+           team_name,
+           abilities.as_slice(),
+        );
         Ok(player)
     }
 
@@ -183,4 +203,3 @@ fn rocket() -> rocket::Rocket {
 fn main() {
     rocket().launch();
 }
-
