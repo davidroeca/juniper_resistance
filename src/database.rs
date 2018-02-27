@@ -63,7 +63,7 @@ pub fn create_player<'a>(
                 }
             })
             .collect()
-    }
+    };
     let values = {
         use schema::teams::dsl::*;
         let found_team = teams
@@ -79,16 +79,19 @@ pub fn create_player<'a>(
             Some(output) => output.id,
         };
         (dsl::name.eq(name), dsl::team_id.eq(team_id))
-    }
+    };
 
-    use schema::players::dsl::*;
-    let player = insert_into(players)
-        .values(values)
-        .execute(conn);
+    let player = {
+        use schema::players::dsl::*;
+        insert_into(players)
+            .values(values)
+            .execute(conn)
+    };
+    use schema::special_abilities::dsl::*;
     for special_ability_id in &special_ability_ids {
         let special_vals = (
-            special_abilities::dsl::player_id(player.id),
-            special_abilities::dsl::team_id(team_id),
+            player_id(player.id),
+            team_id(team_id),
         );
         insert_into(special_abilities)
             .values(special_vals)
