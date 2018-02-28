@@ -14,27 +14,31 @@ use rocket::State;
 
 use juniper::{FieldResult};
 
-use diesel::r2d2;
+use diesel::r2d2::{
+    Pool,
+    ConnectionManager,
+};
+use diesel::pg::PgConnection;
 
 pub mod models;
 pub mod schema;
 pub mod database;
 
 use database::{
+    create_pool,
     find_player,
+    team_from_id,
+    player_abilities,
     create_player,
 };
-
-//------------------------------------------------------------
 // Define base graphql object types
 //------------------------------------------------------------
 
-static RESISTANCE_STR: &'static str = "resistance";
-static SPIES_STR: &'static str = "spies";
-static KNOWS_MERLIN_STR: &'static str = "knows_merlin";
-static CAN_SEE_SPIES_STR: &'static str = "can_see_spies";
-
-type ID = i32;
+const RESISTANCE_STR: &str = "resistance";
+const SPIES_STR: &str = "spies";
+const KNOWS_MERLIN_STR: &str = "knows_merlin";
+const CAN_SEE_SPIES_STR: &str = "can_see_spies";
+const UNKNOWN_STR: &str = "unknown";
 
 #[derive(Clone)]
 #[derive(GraphQLEnum)]
@@ -56,7 +60,7 @@ enum SpecialAbility {
 #[derive(GraphQLObject)]
 #[graphql(description="A player in the game of resistance")]
 struct Player {
-    id: ID,
+    id: i32,
     name: String,
     special_abilities: Vec<SpecialAbility>,
     team: Team,
@@ -77,7 +81,7 @@ struct NewPlayer {
 //------------------------------------------------------------
 
 struct Database {
-    pool: Option<r2d2::Pool>,
+    pool: Option<Pool<ConnectionManager<PgConnection>>>,
 }
 
 impl Database {
@@ -87,12 +91,12 @@ impl Database {
         }
     }
 
-    pub fn get_pool(&mut self) -> r2d2::Pool {
+    pub fn get_pool(&mut self) -> Pool<ConnectionManager<PgConnection>> {
         match self.pool {
-            None => {self.pool = create_pool();},
+            None => {self.pool = Some(create_pool());},
             Some(pool) => (),
         };
-        self.pool.clone()
+        self.pool.unwrap().clone()
     }
 }
 
@@ -121,13 +125,37 @@ graphql_object!(Query: Context |&self| {
         "1.0"
     }
 
-    field player(&executor, name: &str) -> FieldResult<Player> {
+    field player(&executor, name: String) -> FieldResult<Player> {
         let context = executor.context();
         let pool = context.database.get_pool();
-        let connection = pool.get();
+        let connection = pool.get()?;
 
-        let player = find_player(name)?;
-        Ok(player)
+        let player_db = find_player(&connection, name.as_str());
+        let abilities_db = player_abilities(&connection, player_db.id);
+        let team_db = team_from_id(&connection, player_db.team_id);
+        let team = match team_db.name.as_str() {
+            SPIES_STR => Team::Spy,
+            RESISTANCE_STR => Team::Resistance,
+            _ => Team::Unknown,
+        };
+        let special_abilities: Vec<SpecialAbility> = abilities_db
+            .iter()
+            .map(|ability| match ability.name.as_str() {
+                CAN_SEE_SPIES_STR => SpecialAbility::CanSeeSpies,
+                KNOWS_MERLIN_STR => SpecialAbility::KnowsMerlin,
+                _ => SpecialAbility::Unknown,
+            })
+            .filter(|x| match x {
+                &SpecialAbility::Unknown => false,
+                _ => true,
+            })
+            .collect();
+        Ok(Player {
+            id: player_db.id,
+            name: name,
+            team: team,
+            special_abilities: special_abilities,
+        })
     }
 
 });
@@ -139,24 +167,32 @@ graphql_object!(Mutation: Context |&self| {
     field createPlayer(&executor, new_player: NewPlayer) -> FieldResult<Player> {
         let context = executor.context();
         let pool = context.database.get_pool();
-        let connection = pool.get();
+        let connection = pool.get()?;
         let team_name = match new_player.team {
-            Spy => "spy",
-            Resistance => "resistance",
+            Spy => SPIES_STR,
+            Resistance => RESISTANCE_STR,
         };
-        let abilities: Vec<String> = abilities.into_iter().map(|ability| {
-            match ability {
-                CanSeeSpies => "can_see_spies".to_string(),
-                KnowsMerlin => "knows_merlin".to_string(),
-            }
-        }).collect();
-        let player: Player = create_player(
-           connection,
-           new_player.name,
+        let abilities: Vec<String> = new_player.special_abilities
+            .iter()
+            .map(|ability| {
+                match ability {
+                    CanSeeSpies => CAN_SEE_SPIES_STR.to_string(),
+                    KnowsMerlin => KNOWS_MERLIN_STR.to_string(),
+                }
+            })
+            .collect();
+        let player_id = create_player(
+           &connection,
+           new_player.name.as_str(),
            team_name,
            abilities.as_slice(),
         );
-        Ok(player)
+        Ok(Player{
+            id: player_id,
+            name: new_player.name,
+            special_abilities: new_player.special_abilities,
+            team: new_player.team,
+        })
     }
 
 });
