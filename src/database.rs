@@ -81,6 +81,10 @@ pub fn player_abilities<'a>(
     conn: &'a PgConnection,
     player_id: i32,
 ) -> Result<Vec<SpecialAbility>, &'a str> {
+    /// Returns a player's vec of special abilities
+    ///
+    /// Currently uses a closure to propagate diesel-specific errors first
+    ///
     let get_result = || -> Result<Vec<SpecialAbility>, diesel::result::Error> {
         let player_abilities = player_abilities::table
             .filter(player_abilities::player_id.eq(player_id))
