@@ -1,3 +1,8 @@
+///
+/// Auto-generated code from diesel cli
+///
+/// Used to export the direct database interface
+///
 table! {
     player_abilities (id) {
         id -> Int4,

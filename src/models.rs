@@ -1,4 +1,7 @@
-use super::schema::{
+///
+/// Defines the ORM structs used in queries
+///
+use schema::{
     player_abilities,
     players,
     special_abilities,

@@ -8,12 +8,9 @@ extern crate rocket;
 #[macro_use] extern crate juniper;
 extern crate juniper_rocket;
 
+use juniper::{FieldResult};
 use rocket::response::content;
 use rocket::State;
-
-
-use juniper::{FieldResult};
-
 use diesel::r2d2::{
     Pool,
     ConnectionManager,
@@ -23,7 +20,6 @@ use diesel::pg::PgConnection;
 pub mod models;
 pub mod schema;
 pub mod database;
-
 use database::{
     create_pool,
     find_player,
@@ -31,9 +27,10 @@ use database::{
     player_abilities,
     create_player,
 };
+
+//------------------------------------------------------------
 // Define base graphql object types
 //------------------------------------------------------------
-
 const RESISTANCE_STR: &str = "resistance";
 const SPIES_STR: &str = "spies";
 const KNOWS_MERLIN_STR: &str = "knows_merlin";
@@ -77,9 +74,8 @@ struct NewPlayer {
 }
 
 //------------------------------------------------------------
-// Define prerequisite database for the examples
+// Define Context for graphql_object macro use
 //------------------------------------------------------------
-
 struct Database {
     pool: Pool<ConnectionManager<PgConnection>>,
 }
@@ -110,11 +106,12 @@ impl Context {
 
 impl juniper::Context for Context {}
 
-struct Query;
 
 //------------------------------------------------------------
 // Define the broad graphql interface
 //------------------------------------------------------------
+struct Query;
+
 graphql_object!(Query: Context |&self| {
 
     field apiVersion() -> &str {

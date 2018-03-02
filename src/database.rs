@@ -1,14 +1,17 @@
+///
+/// Higher-level database utility functions to be used in main
+///
+use dotenv::dotenv;
+use std::env;
+
+use diesel;
+use diesel::prelude::*;
 use diesel::insert_into;
+use diesel::pg::PgConnection;
 use diesel::r2d2::{
     Pool,
     ConnectionManager,
 };
-use diesel;
-use diesel::prelude::*;
-use diesel::pg::PgConnection;
-use dotenv::dotenv;
-use std::env;
-
 use diesel::query_dsl::{
     RunQueryDsl,
     QueryDsl,
@@ -77,14 +80,15 @@ pub fn team_from_id<'a>(
 
 }
 
+///
+/// Returns a player's vec of special abilities
+///
+/// Currently uses a closure to propagate diesel-specific errors first
+///
 pub fn player_abilities<'a>(
     conn: &'a PgConnection,
     player_id: i32,
 ) -> Result<Vec<SpecialAbility>, &'a str> {
-    /// Returns a player's vec of special abilities
-    ///
-    /// Currently uses a closure to propagate diesel-specific errors first
-    ///
     let get_result = || -> Result<Vec<SpecialAbility>, diesel::result::Error> {
         let player_abilities = player_abilities::table
             .filter(player_abilities::player_id.eq(player_id))
@@ -107,13 +111,15 @@ pub fn player_abilities<'a>(
     }
 }
 
+///
+/// Returns the player id
+///
 pub fn create_player<'a>(
     conn: &'a PgConnection,
     name: &'a str,
     team_name: &'a str,
     abilities: &'a [String]
 ) -> i32 {
-    // Returns the player id
     let special_ability_ids: Vec<i32> = abilities
         .into_iter()
         .map(|ability_name| {
