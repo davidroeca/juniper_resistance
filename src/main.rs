@@ -81,22 +81,18 @@ struct NewPlayer {
 //------------------------------------------------------------
 
 struct Database {
-    pool: Option<Pool<ConnectionManager<PgConnection>>>,
+    pool: Pool<ConnectionManager<PgConnection>>,
 }
 
 impl Database {
     pub fn new() -> Database {
         Database {
-            pool: None,
+            pool: create_pool(),
         }
     }
 
-    pub fn get_pool(&mut self) -> Pool<ConnectionManager<PgConnection>> {
-        match self.pool {
-            None => {self.pool = Some(create_pool());},
-            Some(pool) => (),
-        };
-        self.pool.unwrap().clone()
+    pub fn get_pool(&self) -> Pool<ConnectionManager<PgConnection>> {
+        self.pool.clone()
     }
 }
 
@@ -130,9 +126,9 @@ graphql_object!(Query: Context |&self| {
         let pool = context.database.get_pool();
         let connection = pool.get()?;
 
-        let player_db = find_player(&connection, name.as_str());
-        let abilities_db = player_abilities(&connection, player_db.id);
-        let team_db = team_from_id(&connection, player_db.team_id);
+        let player_db = find_player(&connection, name.as_str())?;
+        let abilities_db = player_abilities(&connection, player_db.id)?;
+        let team_db = team_from_id(&connection, player_db.team_id)?;
         let team = match team_db.name.as_str() {
             SPIES_STR => Team::Spy,
             RESISTANCE_STR => Team::Resistance,
@@ -169,15 +165,17 @@ graphql_object!(Mutation: Context |&self| {
         let pool = context.database.get_pool();
         let connection = pool.get()?;
         let team_name = match new_player.team {
-            Spy => SPIES_STR,
-            Resistance => RESISTANCE_STR,
+            Team::Spy => SPIES_STR,
+            Team::Resistance => RESISTANCE_STR,
+            Team::Unknown => UNKNOWN_STR,
         };
         let abilities: Vec<String> = new_player.special_abilities
             .iter()
             .map(|ability| {
                 match ability {
-                    CanSeeSpies => CAN_SEE_SPIES_STR.to_string(),
-                    KnowsMerlin => KNOWS_MERLIN_STR.to_string(),
+                    &SpecialAbility::CanSeeSpies => CAN_SEE_SPIES_STR.to_string(),
+                    &SpecialAbility::KnowsMerlin => KNOWS_MERLIN_STR.to_string(),
+                    _ => UNKNOWN_STR.to_string(),
                 }
             })
             .collect();
