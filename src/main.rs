@@ -1,31 +1,51 @@
 #![feature(plugin)]
 #![plugin(rocket_codegen)]
 
-use std::collections::HashMap;
-use std::sync::RwLock;
-
+#[macro_use] extern crate diesel;
+extern crate dotenv;
 extern crate rocket;
-use rocket::response::content;
-use rocket::State;
-
-//#[macro_use] extern crate rocket_contrib;
 
 #[macro_use] extern crate juniper;
 extern crate juniper_rocket;
 
+use rocket::response::content;
+use rocket::State;
+
+
 use juniper::{FieldResult};
 
-//------------------------------------------------------------
+use diesel::r2d2::{
+    Pool,
+    ConnectionManager,
+};
+use diesel::pg::PgConnection;
+
+pub mod models;
+pub mod schema;
+pub mod database;
+
+use database::{
+    create_pool,
+    find_player,
+    team_from_id,
+    player_abilities,
+    create_player,
+};
 // Define base graphql object types
 //------------------------------------------------------------
 
-type ID = i32;
+const RESISTANCE_STR: &str = "resistance";
+const SPIES_STR: &str = "spies";
+const KNOWS_MERLIN_STR: &str = "knows_merlin";
+const CAN_SEE_SPIES_STR: &str = "can_see_spies";
+const UNKNOWN_STR: &str = "unknown";
 
 #[derive(Clone)]
 #[derive(GraphQLEnum)]
 enum Team {
     Spy,
     Resistance,
+    Unknown,
 }
 
 #[derive(Clone)]
@@ -33,13 +53,14 @@ enum Team {
 enum SpecialAbility {
     CanSeeSpies,
     KnowsMerlin,
+    Unknown,
 }
 
 #[derive(Clone)]
 #[derive(GraphQLObject)]
 #[graphql(description="A player in the game of resistance")]
 struct Player {
-    id: ID,
+    id: i32,
     name: String,
     special_abilities: Vec<SpecialAbility>,
     team: Team,
@@ -60,48 +81,29 @@ struct NewPlayer {
 //------------------------------------------------------------
 
 struct Database {
-    players: HashMap<ID, Player>,
-    max_player_id: ID,
+    pool: Pool<ConnectionManager<PgConnection>>,
 }
 
 impl Database {
-
     pub fn new() -> Database {
         Database {
-            players: HashMap::<ID, Player>::new(),
-            max_player_id: 0,
+            pool: create_pool(),
         }
     }
 
-    pub fn find_player(&self, id: &ID) -> Result<Player, &'static str> {
-        match self.players.get(&id) {
-            None => Err("No Player found"),
-            Some(player) => Ok(player.clone()),
-        }
-    }
-
-    pub fn insert_player(&mut self, new_player: NewPlayer) -> Player {
-        let next_player_id = self.max_player_id + 1;
-        let player = Player {
-            id: next_player_id,
-            name: new_player.name,
-            special_abilities: new_player.special_abilities,
-            team: new_player.team,
-        };
-        self.players.insert(next_player_id, player.clone());
-        self.max_player_id = next_player_id;
-        player
+    pub fn get_pool(&self) -> Pool<ConnectionManager<PgConnection>> {
+        self.pool.clone()
     }
 }
 
 struct Context {
-    database: RwLock<Database>,
+    database: Database,
 }
 
 impl Context {
     fn new() -> Context {
         Context {
-            database: RwLock::new(Database::new()),
+            database: Database::new(),
         }
     }
 }
@@ -119,11 +121,37 @@ graphql_object!(Query: Context |&self| {
         "1.0"
     }
 
-    field player(&executor, id: ID) -> FieldResult<Player> {
+    field player(&executor, name: String) -> FieldResult<Player> {
         let context = executor.context();
-        let database = context.database.try_read()?;
-        let player = database.find_player(&id)?;
-        Ok(player)
+        let pool = context.database.get_pool();
+        let connection = pool.get()?;
+
+        let player_db = find_player(&connection, name.as_str())?;
+        let abilities_db = player_abilities(&connection, player_db.id)?;
+        let team_db = team_from_id(&connection, player_db.team_id)?;
+        let team = match team_db.name.as_str() {
+            SPIES_STR => Team::Spy,
+            RESISTANCE_STR => Team::Resistance,
+            _ => Team::Unknown,
+        };
+        let special_abilities: Vec<SpecialAbility> = abilities_db
+            .iter()
+            .map(|ability| match ability.name.as_str() {
+                CAN_SEE_SPIES_STR => SpecialAbility::CanSeeSpies,
+                KNOWS_MERLIN_STR => SpecialAbility::KnowsMerlin,
+                _ => SpecialAbility::Unknown,
+            })
+            .filter(|x| match x {
+                &SpecialAbility::Unknown => false,
+                _ => true,
+            })
+            .collect();
+        Ok(Player {
+            id: player_db.id,
+            name: name,
+            team: team,
+            special_abilities: special_abilities,
+        })
     }
 
 });
@@ -134,9 +162,35 @@ graphql_object!(Mutation: Context |&self| {
 
     field createPlayer(&executor, new_player: NewPlayer) -> FieldResult<Player> {
         let context = executor.context();
-        let mut database = context.database.try_write()?;
-        let player: Player = database.insert_player(new_player);
-        Ok(player)
+        let pool = context.database.get_pool();
+        let connection = pool.get()?;
+        let team_name = match new_player.team {
+            Team::Spy => SPIES_STR,
+            Team::Resistance => RESISTANCE_STR,
+            Team::Unknown => UNKNOWN_STR,
+        };
+        let abilities: Vec<String> = new_player.special_abilities
+            .iter()
+            .map(|ability| {
+                match ability {
+                    &SpecialAbility::CanSeeSpies => CAN_SEE_SPIES_STR.to_string(),
+                    &SpecialAbility::KnowsMerlin => KNOWS_MERLIN_STR.to_string(),
+                    _ => UNKNOWN_STR.to_string(),
+                }
+            })
+            .collect();
+        let player_id = create_player(
+           &connection,
+           new_player.name.as_str(),
+           team_name,
+           abilities.as_slice(),
+        );
+        Ok(Player{
+            id: player_id,
+            name: new_player.name,
+            special_abilities: new_player.special_abilities,
+            team: new_player.team,
+        })
     }
 
 });
@@ -183,4 +237,3 @@ fn rocket() -> rocket::Rocket {
 fn main() {
     rocket().launch();
 }
-
